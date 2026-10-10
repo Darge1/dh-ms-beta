@@ -8,16 +8,16 @@
   "dependencies": [
     "network"
   ],
-  "documentation": "https://github.com/tntvlad/hass-miner",
+  "documentation": "https://github.com/Darge1/dh-ms-beta",
   "homekit": {},
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/tntvlad/hass-miner/issues",
+  "issue_tracker": "https://github.com/Darge1/dh-ms-beta/issues",
   "requirements": [
     "betterproto==2.0.0b7",
     "grpcio>=1.60.0",
     "pyasic>=0.78.0"
   ],
   "ssdp": [],
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "zeroconf": []
 }
