@@ -1,0 +1,181 @@
+"""The Miner integration."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from typing import TYPE_CHECKING
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
+
+if TYPE_CHECKING:
+    from homeassistant.helpers import device_registry as dr
+
+from .const import (
+    CONF_CACHED_PROFILE,
+    CONF_IP,
+    DOMAIN,
+    MINER_DETECTION_TIMEOUT,
+    PYASIC_VERSION,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.LIGHT,
+    Platform.BUTTON,
+]
+
+
+def _ensure_pyasic():
+    """Ensure pyasic is installed and imported (runs in executor)."""
+
+    # Apply Python 3.14 compatibility patch BEFORE importing pyasic
+    from .patch import apply_pydantic_property_patch
+
+    apply_pydantic_property_patch()
+
+    def try_import():
+        try:
+            from importlib.metadata import version
+
+            import pyasic
+
+            # Verify the module actually loaded correctly
+            if not hasattr(pyasic, "get_miner"):
+                raise ImportError("pyasic module incomplete")
+            if version("pyasic") != PYASIC_VERSION:
+                raise ImportError("Version mismatch")
+            return pyasic
+        except Exception:
+            return None
+
+    pyasic = try_import()
+    if pyasic:
+        # Apply patches after pyasic is loaded
+        from .patch import (
+            apply_avalonminer_web_patch,
+            apply_vnish_get_config_patch,
+            apply_whatsminer_power_limit_patch,
+        )
+
+        apply_whatsminer_power_limit_patch()
+        apply_avalonminer_web_patch()
+        apply_vnish_get_config_patch()
+        return pyasic
+
+    # Need to install/reinstall
+    from .patch import install_package
+
+    install_package(f"pyasic=={PYASIC_VERSION}", force_reinstall=True, no_deps=True)
+
+    # Clear any cached broken imports
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("pyasic"):
+            del sys.modules[mod_name]
+
+    # Import after clearing cache - may still fail due to race conditions
+    import pyasic
+
+    if not hasattr(pyasic, "get_miner"):
+        raise ImportError("pyasic module loaded but incomplete")
+
+    # Apply patches after fresh install
+    from .patch import (
+        apply_avalonminer_web_patch,
+        apply_vnish_get_config_patch,
+        apply_whatsminer_power_limit_patch,
+    )
+
+    apply_whatsminer_power_limit_patch()
+    apply_avalonminer_web_patch()
+    apply_vnish_get_config_patch()
+
+    return pyasic
+
+
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Set up Miner from a config entry."""
+    # Import pyasic in executor to avoid blocking the event loop
+    try:
+        pyasic = await hass.async_add_executor_job(_ensure_pyasic)
+    except (ImportError, KeyError) as err:
+        # Clear broken modules so next retry has fresh start
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("pyasic"):
+                del sys.modules[mod_name]
+        raise ConfigEntryNotReady(f"pyasic import failed: {err}") from err
+
+    # Import coordinator and services AFTER pyasic is installed
+    from .coordinator import MinerCoordinator
+    from .services import async_setup_services
+
+    miner_ip = config_entry.data[CONF_IP]
+    try:
+        # See MINER_DETECTION_TIMEOUT in const.py for why this isn't tiny.
+        miner = await asyncio.wait_for(
+            pyasic.get_miner(miner_ip), timeout=MINER_DETECTION_TIMEOUT
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        miner = None
+
+    if miner is None and not config_entry.data.get(CONF_CACHED_PROFILE):
+        # Never seen this miner successfully -> nothing to build entities
+        # from; keep the classic retry behaviour.
+        raise ConfigEntryNotReady("Miner could not be found.")
+
+    m_coordinator = MinerCoordinator(hass, config_entry)
+    hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = m_coordinator
+
+    if miner is None:
+        # Miner is unreachable (typically powered off to save energy) but we
+        # have a cached device profile from an earlier successful update: set
+        # up from that instead of failing with ConfigEntryNotReady, which
+        # showed the integration as broken ("retrying setup") for as long as
+        # the miner stayed off. Entities are created unavailable and recover
+        # automatically once the miner is powered on again.
+        _LOGGER.info(
+            "Miner %s is unreachable; setting up from the cached device "
+            "profile - entities stay unavailable until the miner returns",
+            miner_ip,
+        )
+        m_coordinator.prime_from_cached_profile()
+    # Always start the polling loop — when offline, _async_update_data returns
+    # the primed data without raising UpdateFailed, so this completes normally
+    # and schedules the background refresh that will detect the miner once it
+    # comes back online.
+    await m_coordinator.async_config_entry_first_refresh()
+
+    await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+
+    await async_setup_services(hass)
+
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        config_entry, PLATFORMS
+    )
+    if unload_ok:
+        hass.data[DOMAIN].pop(config_entry.entry_id)
+
+    return unload_ok
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Remove a device from the config entry."""
+    return True

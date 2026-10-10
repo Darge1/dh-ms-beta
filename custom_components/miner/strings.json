@@ -1,0 +1,54 @@
+{
+  "title": "Miner-Steuerung",
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "ip": "[%key:common::config_flow::data::ip%]",
+          "min_power": "[%key:common::config_flow::data::min_power%]",
+          "max_power": "[%key:common::config_flow::data::max_power%]"
+        },
+        "description": "Customized by D.H."
+      },
+      "login": {
+        "data": {
+          "ssh_username": "[%key:common::config_flow::data::ssh_username%]",
+          "ssh_password": "[%key:common::config_flow::data::ssh_password%]",
+          "rpc_password": "[%key:common::config_flow::data::rpc_password%]",
+          "web_username": "[%key:common::config_flow::data::web_username%]",
+          "web_password": "[%key:common::config_flow::data::web_password%]"
+        }
+      },
+      "title": {
+        "data": {
+          "title": "[%key:common::config_flow::data::title%]"
+        }
+      },
+      "avalon_options": {
+        "title": "Avalon Miner Options",
+        "description": "Choose the control mode for your Avalon miner.",
+        "data": {
+          "avalon_control_mode": "Control Mode"
+        },
+        "data_description": {
+          "avalon_control_mode": "Simple: Basic monitoring via pyasic. Full: Advanced control via CGMiner API (workmode, LED effects, mining switch)."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]",
+      "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]",
+      "already_configured": "[%key:common::config_flow::abort::already_configured%]"
+    }
+  },
+  "services": {
+    "reboot": {
+      "name": "Reboot miner",
+      "description": "Reboots a miner."
+    },
+    "restart_backend": {
+      "name": "Restart mining on miner",
+      "description": "Restarts the mining process on a miner."
+    }
+  }
+}

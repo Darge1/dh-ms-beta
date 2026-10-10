@@ -1,0 +1,23 @@
+{
+  "domain": "miner",
+  "name": "Miner-Steuerung",
+  "codeowners": [
+    "@tntvlad"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "network"
+  ],
+  "documentation": "https://github.com/tntvlad/hass-miner",
+  "homekit": {},
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/tntvlad/hass-miner/issues",
+  "requirements": [
+    "betterproto==2.0.0b7",
+    "grpcio>=1.60.0",
+    "pyasic>=0.78.0"
+  ],
+  "ssdp": [],
+  "version": "1.0.0-beta.1",
+  "zeroconf": []
+}

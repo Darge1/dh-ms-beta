@@ -1,0 +1,325 @@
+"""Config flow for Miner."""
+
+import logging
+from importlib.metadata import version
+
+import voluptuous as vol
+from homeassistant import config_entries
+from homeassistant.components import network
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
+
+from .const import (
+    AVALON_MODE_FULL,
+    AVALON_MODE_SIMPLE,
+    CONF_AVALON_CONTROL_MODE,
+    CONF_IP,
+    CONF_MAX_POWER,
+    CONF_MIN_POWER,
+    CONF_RPC_PASSWORD,
+    CONF_SSH_PASSWORD,
+    CONF_SSH_USERNAME,
+    CONF_TITLE,
+    CONF_WEB_PASSWORD,
+    CONF_WEB_USERNAME,
+    DOMAIN,
+    PYASIC_VERSION,
+)
+
+# Lazy import - will be populated when needed
+pyasic = None
+MinerNetwork = None
+MinerMake = None
+
+
+def _ensure_pyasic():
+    """Ensure pyasic is installed and imported."""
+    global pyasic, MinerNetwork, MinerMake
+    if pyasic is not None:
+        return
+
+    # Apply Python 3.14 compatibility patch BEFORE importing pyasic
+    from .patch import apply_pydantic_property_patch
+
+    apply_pydantic_property_patch()
+
+    try:
+        import pyasic as _pyasic
+
+        if version("pyasic") != PYASIC_VERSION:
+            raise ImportError("Version mismatch")
+    except (ImportError, Exception):
+        from .patch import install_package
+
+        install_package(f"pyasic=={PYASIC_VERSION}", no_deps=True)
+        import pyasic as _pyasic
+
+    pyasic = _pyasic
+    from pyasic import MinerNetwork as _MinerNetwork
+
+    MinerNetwork = _MinerNetwork
+    from pyasic.device.makes import MinerMake as _MinerMake
+
+    MinerMake = _MinerMake
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def _async_has_devices(hass: HomeAssistant) -> bool:
+    """Return if there are devices that can be discovered."""
+    await hass.async_add_executor_job(_ensure_pyasic)
+    adapters = await network.async_get_adapters(hass)
+
+    for adapter in adapters:
+        for ip_info in adapter["ipv4"]:
+            local_ip = ip_info["address"]
+            network_prefix = ip_info["network_prefix"]
+            miner_net = MinerNetwork.from_subnet(f"{local_ip}/{network_prefix}")
+            miners = await miner_net.scan()
+            if len(miners) > 0:
+                return True
+    return False
+
+
+async def validate_ip_input(hass: HomeAssistant, data: dict[str, str]):
+    """Validate the user input allows us to connect."""
+    await hass.async_add_executor_job(_ensure_pyasic)
+    miner_ip = data.get(CONF_IP)
+
+    miner = await pyasic.get_miner(miner_ip)
+    if miner is None:
+        return {"base": "Unable to connect to Miner, is IP correct?"}, None
+
+    return {}, miner
+
+
+def _is_avalon_miner(miner) -> bool:
+    """Check if miner is an Avalon miner."""
+    if miner is None:
+        return False
+
+    miner_class_name = miner.__class__.__name__.lower()
+    make = str(getattr(miner, "make", "") or "").lower()
+    model = str(getattr(miner, "model", "") or "").lower()
+
+    return "avalon" in miner_class_name or "avalon" in make or "avalon" in model
+
+
+class MinerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Miner."""
+
+    VERSION = 1
+
+    def __init__(self):
+        """Initialize."""
+        self._data = {}
+        self._miner = None
+
+    async def async_step_user(self, user_input=None):
+        """Get miner IP and check if it is available."""
+        if user_input is None:
+            user_input = {}
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_IP, default=user_input.get(CONF_IP, "")): str,
+                vol.Optional(CONF_MIN_POWER, default=15): vol.All(
+                    vol.Coerce(int), vol.Range(min=15, max=10000)
+                ),
+                vol.Optional(CONF_MAX_POWER, default=10000): vol.All(
+                    vol.Coerce(int), vol.Range(min=15, max=10000)
+                ),
+            }
+        )
+
+        if not user_input:
+            return self.async_show_form(step_id="user", data_schema=schema)
+
+        errors, miner = await validate_ip_input(self.hass, user_input)
+
+        if errors:
+            return self.async_show_form(
+                step_id="user", data_schema=schema, errors=errors
+            )
+
+        self._miner = miner
+        self._data.update(user_input)
+        return await self.async_step_login()
+
+    async def async_step_login(self, user_input=None):
+        """Get miner login credentials."""
+        if user_input is None:
+            user_input = {}
+
+        # Detect BitAxe miners and skip credential prompts
+        if self._miner.make == MinerMake.BITAXE:
+            return await self.async_step_title()
+
+        schema_data = {}
+
+        if self._miner.rpc is not None:
+            if self._miner.rpc.pwd is not None:
+                schema_data[
+                    vol.Optional(
+                        CONF_RPC_PASSWORD,
+                        default=user_input.get(
+                            CONF_RPC_PASSWORD,
+                            (
+                                self._miner.rpc.pwd
+                                if self._miner.api.pwd is not None
+                                else ""
+                            ),
+                        ),
+                    )
+                ] = TextSelector(
+                    TextSelectorConfig(
+                        type=TextSelectorType.PASSWORD, autocomplete="current-password"
+                    )
+                )
+
+        if self._miner.web is not None:
+            schema_data[
+                vol.Optional(
+                    CONF_WEB_USERNAME,
+                    default=user_input.get(CONF_WEB_USERNAME, self._miner.web.username),
+                )
+            ] = str
+            schema_data[
+                vol.Optional(
+                    CONF_WEB_PASSWORD,
+                    default=user_input.get(
+                        CONF_WEB_PASSWORD,
+                        self._miner.web.pwd if self._miner.web.pwd is not None else "",
+                    ),
+                )
+            ] = TextSelector(
+                TextSelectorConfig(
+                    type=TextSelectorType.PASSWORD, autocomplete="current-password"
+                )
+            )
+
+        if self._miner.ssh is not None:
+            schema_data[
+                vol.Required(
+                    CONF_SSH_USERNAME,
+                    default=user_input.get(CONF_SSH_USERNAME, self._miner.ssh.username),
+                )
+            ] = str
+            schema_data[
+                vol.Optional(
+                    CONF_SSH_PASSWORD,
+                    default=user_input.get(
+                        CONF_SSH_PASSWORD,
+                        self._miner.ssh.pwd if self._miner.ssh.pwd is not None else "",
+                    ),
+                )
+            ] = TextSelector(
+                TextSelectorConfig(
+                    type=TextSelectorType.PASSWORD, autocomplete="current-password"
+                )
+            )
+
+        schema = vol.Schema(schema_data)
+        if not user_input:
+            if len(schema_data) == 0:
+                # No credentials needed, check if Avalon miner
+                if _is_avalon_miner(self._miner):
+                    return await self.async_step_avalon_options()
+                return await self.async_step_title()
+            return self.async_show_form(step_id="login", data_schema=schema)
+
+        self._data.update(user_input)
+
+        # Check if Avalon miner to show options
+        if _is_avalon_miner(self._miner):
+            return await self.async_step_avalon_options()
+        return await self.async_step_title()
+
+    async def async_step_avalon_options(self, user_input=None):
+        """Get Avalon miner control options."""
+        if user_input is None:
+            user_input = {}
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_AVALON_CONTROL_MODE,
+                    default=user_input.get(CONF_AVALON_CONTROL_MODE, AVALON_MODE_FULL),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {
+                                "value": AVALON_MODE_SIMPLE,
+                                "label": "Simple (pyasic only)",
+                            },
+                            {
+                                "value": AVALON_MODE_FULL,
+                                "label": "Full (CGMiner API control)",
+                            },
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        if not user_input:
+            return self.async_show_form(
+                step_id="avalon_options", data_schema=data_schema
+            )
+
+        self._data.update(user_input)
+        return await self.async_step_title()
+
+    async def async_step_title(self, user_input=None):
+        """Get entity title."""
+        if self._miner.api is not None:
+            if self._miner.api.pwd is not None:
+                self._miner.api.pwd = self._data.get(CONF_RPC_PASSWORD, "")
+
+        if self._miner.web is not None:
+            self._miner.web.username = self._data.get(CONF_WEB_USERNAME, "")
+            self._miner.web.pwd = self._data.get(CONF_WEB_PASSWORD, "")
+
+        if self._miner.ssh is not None:
+            self._miner.ssh.username = self._data.get(CONF_SSH_USERNAME, "")
+            self._miner.ssh.pwd = self._data.get(CONF_SSH_PASSWORD, "")
+
+        title = await self._miner.get_hostname()
+
+        if user_input is None:
+            user_input = {}
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_TITLE,
+                    default=user_input.get(CONF_TITLE, title),
+                ): str,
+            }
+        )
+        if not user_input:
+            return self.async_show_form(step_id="title", data_schema=data_schema)
+
+        self._data.update(user_input)
+
+        return self.async_create_entry(title=self._data[CONF_TITLE], data=self._data)
+
+    async def async_step_discovery(self, discovery_info):
+        """Handle discovery."""
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
+
+        has_devices = await _async_has_devices(self.hass)
+        if not has_devices:
+            return self.async_abort(reason="no_devices_found")
+
+        return await self.async_step_user()

@@ -1,0 +1,709 @@
+"""Support for Miner sensors."""
+
+from __future__ import annotations
+
+import logging
+
+from homeassistant.components.sensor import (
+    EntityCategory,
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import REVOLUTIONS_PER_MINUTE, UnitOfPower, UnitOfTemperature
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry, entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN, JOULES_PER_TERA_HASH, TERA_HASH_PER_SECOND
+from .coordinator import (
+    MinerCoordinator,
+    _is_avalon_nano_miner,
+    _is_bitaxe_miner,
+    _is_bos_miner,
+    _is_vnish_miner,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+ENTITY_DESCRIPTION_KEY_MAP: dict[str, SensorEntityDescription] = {
+    "temperature": SensorEntityDescription(
+        key="Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "board_temperature": SensorEntityDescription(
+        key="Board Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "board_temperature_min": SensorEntityDescription(
+        key="Board Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    "chip_temperature": SensorEntityDescription(
+        key="Chip Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "chip_temperature_min": SensorEntityDescription(
+        key="Chip Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    "inlet_temperature": SensorEntityDescription(
+        key="Inlet Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "outlet_temperature": SensorEntityDescription(
+        key="Outlet Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "water_inlet_temperature": SensorEntityDescription(
+        key="Est. Water Inlet Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    "water_outlet_temperature": SensorEntityDescription(
+        key="Est. Water Outlet Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    "hashrate": SensorEntityDescription(
+        key="Hashrate",
+        native_unit_of_measurement=TERA_HASH_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "ideal_hashrate": SensorEntityDescription(
+        key="Ideal Hashrate",
+        native_unit_of_measurement=TERA_HASH_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "active_preset_name": SensorEntityDescription(
+        key="Active Preset Name",
+        device_class=SensorDeviceClass.ENUM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "board_hashrate": SensorEntityDescription(
+        key="Board Hashrate",
+        native_unit_of_measurement=TERA_HASH_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "power_limit": SensorEntityDescription(
+        key="Power Limit",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "miner_consumption": SensorEntityDescription(
+        key="Miner Consumption",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "efficiency": SensorEntityDescription(
+        key="Efficiency",
+        native_unit_of_measurement=JOULES_PER_TERA_HASH,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "fan_speed": SensorEntityDescription(
+        key="Fan Speed",
+        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    "best_share": SensorEntityDescription(
+        key="Best Share",
+        state_class=SensorStateClass.TOTAL,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:trophy-outline",
+    ),
+    "found_blocks": SensorEntityDescription(
+        key="Found Blocks",
+        state_class=SensorStateClass.TOTAL,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:cube-outline",
+    ),
+}
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Add sensors for passed config_entry in HA."""
+    coordinator: MinerCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+
+    def _create_miner_entity(sensor: str) -> MinerSensor:
+        """Create a miner sensor entity."""
+        description = ENTITY_DESCRIPTION_KEY_MAP.get(
+            sensor, SensorEntityDescription(key="base_sensor")
+        )
+        return MinerSensor(
+            coordinator=coordinator,
+            sensor=sensor,
+            entity_description=description,
+        )
+
+    def _create_board_entity(board_num: int, sensor: str) -> MinerBoardSensor:
+        """Create a board sensor entity."""
+        description = ENTITY_DESCRIPTION_KEY_MAP.get(
+            sensor, SensorEntityDescription(key="base_sensor")
+        )
+        return MinerBoardSensor(
+            coordinator=coordinator,
+            board_num=board_num,
+            sensor=sensor,
+            entity_description=description,
+        )
+
+    def _create_fan_entity(fan_num: int, sensor: str) -> MinerFanSensor:
+        """Create a fan sensor entity."""
+        description = ENTITY_DESCRIPTION_KEY_MAP.get(
+            sensor, SensorEntityDescription(key="base_sensor")
+        )
+        return MinerFanSensor(
+            coordinator=coordinator,
+            fan_num=fan_num,
+            sensor=sensor,
+            entity_description=description,
+        )
+
+    # Coordinator data is primed in __init__ (live first refresh or cached
+    # profile when the miner is powered off); only refresh here if that
+    # somehow hasn't happened.
+    if coordinator.data is None:
+        await coordinator.async_config_entry_first_refresh()
+
+    # When the miner is offline (set up from the cached profile), the live
+    # miner object is None - fall back to the cached firmware-type flags and
+    # capabilities so the same entity set is created as when it is online.
+    miner = coordinator.miner
+    offline = miner is None
+    profile = coordinator.cached_profile
+
+    sensors = []
+    is_avalon = _is_avalon_nano_miner(miner) or (
+        offline and profile.get("is_avalon", False)
+    )
+    is_vnish = _is_vnish_miner(miner) or (offline and profile.get("is_vnish", False))
+    for s in coordinator.data["miner_sensors"]:
+        # Only show active_preset_name for Avalon Nano miners (workmode)
+        if s == "active_preset_name" and not is_avalon:
+            continue
+        sensors.append(_create_miner_entity(s))
+
+    # Build board sensor list - min temps for VNish, inlet/outlet for BOS
+    is_bos = _is_bos_miner(miner, coordinator.data.get("fw_ver", "")) or (
+        offline and profile.get("is_bos", False)
+    )
+    board_sensors = ["board_temperature", "chip_temperature", "board_hashrate"]
+    if is_vnish:
+        board_sensors = ["board_temperature", "board_temperature_min", "chip_temperature", "chip_temperature_min", "water_inlet_temperature", "water_outlet_temperature", "board_hashrate"]
+    elif is_bos:
+        board_sensors = ["board_temperature", "inlet_temperature", "outlet_temperature", "chip_temperature", "water_inlet_temperature", "water_outlet_temperature", "board_hashrate"]
+
+    expected_hashboards = (
+        miner.expected_hashboards if miner is not None
+        else profile.get("expected_hashboards")
+    )
+    for board in range(expected_hashboards or 3):
+        for s in board_sensors:
+            sensors.append(_create_board_entity(board, s))
+    model_name = coordinator.data.get("model", "") or ""
+    is_hydro = "hyd" in model_name.lower()
+    if not is_hydro:
+        expected_fans = (
+            miner.expected_fans if miner is not None
+            else (profile.get("expected_fans") or profile.get("fan_count"))
+        )
+        for fan in range(expected_fans or len(coordinator.data.get("fan_sensors", {})) or 2):
+            for s in ["fan_speed"]:
+                sensors.append(_create_fan_entity(fan, s))
+
+    # Add Avalon-specific sensors (Best Share, Found Blocks)
+    if is_avalon:
+        for sensor_key in ["best_share", "found_blocks"]:
+            description = ENTITY_DESCRIPTION_KEY_MAP.get(sensor_key)
+            if description:
+                sensors.append(
+                    AvalonSensor(
+                        coordinator=coordinator,
+                        sensor=sensor_key,
+                        entity_description=description,
+                    )
+                )
+
+    # Add VNish-specific sensors (Best Share, Found Blocks)
+    if is_vnish:
+        for sensor_key in ["best_share", "found_blocks"]:
+            description = ENTITY_DESCRIPTION_KEY_MAP.get(sensor_key)
+            if description:
+                sensors.append(
+                    VNishSensor(
+                        coordinator=coordinator,
+                        sensor=sensor_key,
+                        entity_description=description,
+                    )
+                )
+
+    # Add BOS-specific sensors (Best Share, Found Blocks)
+    if is_bos:
+        for sensor_key in ["best_share", "found_blocks"]:
+            description = ENTITY_DESCRIPTION_KEY_MAP.get(sensor_key)
+            if description:
+                sensors.append(
+                    BOSSensor(
+                        coordinator=coordinator,
+                        sensor=sensor_key,
+                        entity_description=description,
+                    )
+                )
+
+    # Add BitAxe-specific sensors (Best Share, Found Blocks)
+    if _is_bitaxe_miner(miner) or (offline and profile.get("is_bitaxe", False)):
+        for sensor_key in ["best_share", "found_blocks"]:
+            description = ENTITY_DESCRIPTION_KEY_MAP.get(sensor_key)
+            if description:
+                sensors.append(
+                    BitAxeSensor(
+                        coordinator=coordinator,
+                        sensor=sensor_key,
+                        entity_description=description,
+                    )
+                )
+
+    async_add_entities(sensors)
+
+
+class MinerSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a Miner Sensor."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-{sensor}"
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        try:
+            return self.coordinator.data["miner_sensors"][self._sensor]
+        except LookupError:
+            return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class MinerBoardSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a Miner Board Sensor."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        board_num: int,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-{board_num}-{sensor}"
+        self._board_num = board_num
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        try:
+            return self.coordinator.data["board_sensors"][self._board_num][self._sensor]
+        except LookupError:
+            return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} Board #{self._board_num} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class MinerFanSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a Miner Fan Sensor."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        fan_num: int,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-{fan_num}-{sensor}"
+        self._fan_num = fan_num
+        self._sensor = sensor
+        self.entity_description = entity_description
+        self._attr_force_update = True
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        try:
+            return self.coordinator.data["fan_sensors"][self._fan_num][self._sensor]
+        except LookupError:
+            return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} Fan #{self._fan_num} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class AvalonSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines an Avalon-specific Sensor (Best Share, Found Blocks)."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-avalon-{sensor}"
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        if self._sensor == "best_share":
+            return self.coordinator.data.get("avalon_best_share")
+        elif self._sensor == "found_blocks":
+            return self.coordinator.data.get("avalon_found_blocks")
+        return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class VNishSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a VNish-specific Sensor (Best Share, Found Blocks)."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-vnish-{sensor}"
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        if self._sensor == "best_share":
+            return self.coordinator.data.get("vnish_best_share")
+        elif self._sensor == "found_blocks":
+            return self.coordinator.data.get("vnish_found_blocks")
+        return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class BOSSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a BOS-specific Sensor (Best Share, Found Blocks)."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-bos-{sensor}"
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        if self._sensor == "best_share":
+            return self.coordinator.data.get("bos_best_share")
+        elif self._sensor == "found_blocks":
+            return self.coordinator.data.get("bos_found_blocks")
+        return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
+
+
+class BitAxeSensor(CoordinatorEntity[MinerCoordinator], SensorEntity):
+    """Defines a BitAxe-specific Sensor (Best Share, Found Blocks)."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: MinerCoordinator,
+        sensor: str,
+        entity_description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator)
+        self._attr_unique_id = f"{self.coordinator.config_entry.entry_id}-bitaxe-{sensor}"
+        self._sensor = sensor
+        self.entity_description = entity_description
+
+    @property
+    def _sensor_data(self):
+        """Return sensor data."""
+        if self._sensor == "best_share":
+            return self.coordinator.data.get("bitaxe_best_share")
+        elif self._sensor == "found_blocks":
+            return self.coordinator.data.get("bitaxe_found_blocks")
+        return None
+
+    @property
+    def name(self) -> str | None:
+        """Return name of the entity."""
+        return f"{self.coordinator.config_entry.title} {self.entity_description.key}"
+
+    @property
+    def device_info(self) -> entity.DeviceInfo:
+        """Return device info."""
+        mac = self.coordinator.data.get("mac")
+        return entity.DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
+            connections={(device_registry.CONNECTION_NETWORK_MAC, mac)} if mac else set(),
+            manufacturer=self.coordinator.data["make"],
+            model=self.coordinator.data["model"],
+            sw_version=self.coordinator.data["fw_ver"],
+            name=f"{self.coordinator.config_entry.title}",
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self._sensor_data
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available or not."""
+        return self.coordinator.available
