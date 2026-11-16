@@ -1,7 +1,6 @@
 """Config flow for Miner."""
 
 import logging
-from importlib.metadata import version
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -30,7 +29,6 @@ from .const import (
     CONF_WEB_PASSWORD,
     CONF_WEB_USERNAME,
     DOMAIN,
-    PYASIC_VERSION,
 )
 
 # Lazy import - will be populated when needed
@@ -40,35 +38,23 @@ MinerMake = None
 
 
 def _ensure_pyasic():
-    """Ensure pyasic is installed and imported."""
+    """Import pyasic for discovery without reinstalling shared dependencies."""
     global pyasic, MinerNetwork, MinerMake
     if pyasic is not None:
         return
 
-    # Apply Python 3.14 compatibility patch BEFORE importing pyasic
+    # pyasic needs this patch before its first import on Python 3.14.
     from .patch import apply_pydantic_property_patch
 
     apply_pydantic_property_patch()
 
-    try:
-        import pyasic as _pyasic
-
-        if version("pyasic") != PYASIC_VERSION:
-            raise ImportError("Version mismatch")
-    except (ImportError, Exception):
-        from .patch import install_package
-
-        install_package(f"pyasic=={PYASIC_VERSION}", no_deps=True)
-        import pyasic as _pyasic
-
-    pyasic = _pyasic
+    import pyasic as _pyasic
     from pyasic import MinerNetwork as _MinerNetwork
-
-    MinerNetwork = _MinerNetwork
     from pyasic.device.makes import MinerMake as _MinerMake
 
+    pyasic = _pyasic
+    MinerNetwork = _MinerNetwork
     MinerMake = _MinerMake
-
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.importlib import async_import_module
 
 if TYPE_CHECKING:
     from homeassistant.helpers import device_registry as dr
@@ -36,59 +37,36 @@ PLATFORMS: list[Platform] = [
 
 
 def _ensure_pyasic():
-    """Ensure pyasic is installed and imported (runs in executor)."""
+    """Load and patch pyasic without changing shared packages at runtime.
 
-    # Apply Python 3.14 compatibility patch BEFORE importing pyasic
+    Home Assistant manages dependencies from manifest.json.  Installing a
+    different version or clearing sys.modules while another integration uses
+    pyasic can corrupt both integrations (e.g. OpenKairo Mining).
+    """
+    # The pydantic fix must run before pyasic is imported on Python 3.14.
     from .patch import apply_pydantic_property_patch
 
     apply_pydantic_property_patch()
 
-    def try_import():
-        try:
-            from importlib.metadata import version
-
-            import pyasic
-
-            # Verify the module actually loaded correctly
-            if not hasattr(pyasic, "get_miner"):
-                raise ImportError("pyasic module incomplete")
-            if version("pyasic") != PYASIC_VERSION:
-                raise ImportError("Version mismatch")
-            return pyasic
-        except Exception:
-            return None
-
-    pyasic = try_import()
-    if pyasic:
-        # Apply patches after pyasic is loaded
-        from .patch import (
-            apply_avalonminer_web_patch,
-            apply_vnish_get_config_patch,
-            apply_whatsminer_power_limit_patch,
-        )
-
-        apply_whatsminer_power_limit_patch()
-        apply_avalonminer_web_patch()
-        apply_vnish_get_config_patch()
-        return pyasic
-
-    # Need to install/reinstall
-    from .patch import install_package
-
-    install_package(f"pyasic=={PYASIC_VERSION}", force_reinstall=True, no_deps=True)
-
-    # Clear any cached broken imports
-    for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("pyasic"):
-            del sys.modules[mod_name]
-
-    # Import after clearing cache - may still fail due to race conditions
     import pyasic
 
     if not hasattr(pyasic, "get_miner"):
-        raise ImportError("pyasic module loaded but incomplete")
+        raise ImportError("pyasic module incomplete")
 
-    # Apply patches after fresh install
+    try:
+        installed_version = version("pyasic")
+    except PackageNotFoundError:
+        installed_version = "unknown"
+
+    if installed_version != PYASIC_VERSION:
+        _LOGGER.warning(
+            "Miner-Steuerung was developed with pyasic %s, but %s is "
+            "installed. Using the shared version without reinstalling it; "
+            "other integrations must not replace pyasic at runtime.",
+            PYASIC_VERSION,
+            installed_version,
+        )
+
     from .patch import (
         apply_avalonminer_web_patch,
         apply_vnish_get_config_patch,
@@ -98,25 +76,25 @@ def _ensure_pyasic():
     apply_whatsminer_power_limit_patch()
     apply_avalonminer_web_patch()
     apply_vnish_get_config_patch()
-
     return pyasic
-
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Miner from a config entry."""
-    # Import pyasic in executor to avoid blocking the event loop
+    # Import and patch pyasic in the executor; NEVER reinstall or evict a
+    # dependency that is also used by another Home Assistant integration.
     try:
         pyasic = await hass.async_add_executor_job(_ensure_pyasic)
-    except (ImportError, KeyError) as err:
-        # Clear broken modules so next retry has fresh start
-        for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("pyasic"):
-                del sys.modules[mod_name]
+    except Exception as err:
         raise ConfigEntryNotReady(f"pyasic import failed: {err}") from err
 
-    # Import coordinator and services AFTER pyasic is installed
-    from .coordinator import MinerCoordinator
-    from .services import async_setup_services
+    # These modules were previously imported inside the event loop, triggering
+    # Home Assistant's "blocking call to import_module" warning.  Import them
+    # through Home Assistant's dedicated import executor *before* forwarding.
+    # Do this sequentially because light.py also imports select.py.
+    coordinator_module = await async_import_module(hass, f"{__package__}.coordinator")
+    services_module = await async_import_module(hass, f"{__package__}.services")
+    for platform in PLATFORMS:
+        await async_import_module(hass, f"{__package__}.{platform.value}")
 
     miner_ip = config_entry.data[CONF_IP]
     try:
@@ -132,7 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         # from; keep the classic retry behaviour.
         raise ConfigEntryNotReady("Miner could not be found.")
 
-    m_coordinator = MinerCoordinator(hass, config_entry)
+    m_coordinator = coordinator_module.MinerCoordinator(hass, config_entry)
     hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = m_coordinator
 
     if miner is None:
@@ -156,7 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
-    await async_setup_services(hass)
+    await services_module.async_setup_services(hass)
 
     return True
 

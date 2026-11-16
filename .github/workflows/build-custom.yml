@@ -1,76 +1,31 @@
-name: Build customized Miner-Steuerung
+name: Validate customized Miner-Steuerung
 
 on:
   workflow_dispatch:
   push:
     paths:
+      - 'custom_components/miner/**'
       - '.github/workflows/build-custom.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout this repository
         uses: actions/checkout@v4
-
-      - name: Preserve D.H. branding
+      - name: Validate Python syntax
+        run: python -m compileall -q custom_components/miner
+      - name: Validate manifest and version
         run: |
-          mkdir -p /tmp/dh-brand
-          cp custom_components/miner/brand/*.png /tmp/dh-brand/ 2>/dev/null || true
-
-      - name: Fetch upstream integration
-        run: |
-          git clone --depth 1 https://github.com/tntvlad/hass-miner.git /tmp/upstream
-          rm -rf custom_components
-          cp -a /tmp/upstream/custom_components ./
-          cp /tmp/upstream/LICENSE ./LICENSE
-
-      - name: Apply D.H. customization
-        shell: python
-        run: |
+          python - <<'PY'
           import json
           from pathlib import Path
-
-          manifest_path = Path('custom_components/miner/manifest.json')
-          manifest = json.loads(manifest_path.read_text())
-          manifest['name'] = 'Miner-Steuerung'
-          manifest['version'] = '1.0.0-beta.1'
-          manifest['documentation'] = 'https://github.com/Darge1/dh-ms-beta'
-          manifest['issue_tracker'] = 'https://github.com/Darge1/dh-ms-beta/issues'
-          manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
-
-          for path in [Path('custom_components/miner/strings.json'), Path('custom_components/miner/translations/en.json')]:
-              if path.exists():
-                  data = json.loads(path.read_text())
-                  data['title'] = 'Miner-Steuerung'
-                  user_step = data.setdefault('config', {}).setdefault('step', {}).setdefault('user', {})
-                  user_step['description'] = 'Customized by D.H.'
-                  path.write_text(json.dumps(data, indent=2) + '\n')
-
-          Path('hacs.json').write_text(json.dumps({
-              'name': 'Miner-Steuerung',
-              'render_readme': True
-          }, indent=2) + '\n')
-
-      - name: Restore D.H. branding
-        run: |
-          mkdir -p custom_components/miner/brand
-          cp /tmp/dh-brand/*.png custom_components/miner/brand/ 2>/dev/null || true
-          if [ -f custom_components/miner/brand/icon.png ] && [ ! -f custom_components/miner/brand/logo.png ]; then
-            cp custom_components/miner/brand/icon.png custom_components/miner/brand/logo.png
-          fi
-
-      - name: Commit generated integration
-        run: |
-          git config user.name "D.H. build bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add custom_components LICENSE hacs.json
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Build Miner-Steuerung 1.0.0-beta.1"
-            git push
-          fi
+          manifest = json.loads(Path("custom_components/miner/manifest.json").read_text())
+          assert manifest["domain"] == "miner"
+          assert manifest["version"] == "1.0.0-beta.2"
+          assert any(req.startswith("pyasic>=") for req in manifest["requirements"])
+          print("Manifest and syntax validation passed")
+          PY
