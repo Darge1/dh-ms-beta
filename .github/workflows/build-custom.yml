@@ -25,7 +25,7 @@ jobs:
           from pathlib import Path
           manifest = json.loads(Path("custom_components/miner/manifest.json").read_text())
           assert manifest["domain"] == "miner"
-          assert manifest["version"] == "1.0.0-beta.2"
-          assert any(req.startswith("pyasic>=") for req in manifest["requirements"])
+          assert manifest["version"] == "1.0.0-beta.3"
+          assert "pyasic==0.78.12" in manifest["requirements"]
           print("Manifest and syntax validation passed")
           PY

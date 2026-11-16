@@ -78,25 +78,36 @@ def _ensure_pyasic():
     apply_vnish_get_config_patch()
     return pyasic
 
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up Miner from a config entry."""
     # Import and patch pyasic in the executor; NEVER reinstall or evict a
     # dependency that is also used by another Home Assistant integration.
+    miner_ip = config_entry.data[CONF_IP]
     try:
         pyasic = await hass.async_add_executor_job(_ensure_pyasic)
     except Exception as err:
+        _LOGGER.exception("Miner %s: pyasic initialization failed", miner_ip)
         raise ConfigEntryNotReady(f"pyasic import failed: {err}") from err
 
     # These modules were previously imported inside the event loop, triggering
     # Home Assistant's "blocking call to import_module" warning.  Import them
     # through Home Assistant's dedicated import executor *before* forwarding.
     # Do this sequentially because light.py also imports select.py.
-    coordinator_module = await async_import_module(hass, f"{__package__}.coordinator")
-    services_module = await async_import_module(hass, f"{__package__}.services")
-    for platform in PLATFORMS:
-        await async_import_module(hass, f"{__package__}.{platform.value}")
-
-    miner_ip = config_entry.data[CONF_IP]
+    try:
+        coordinator_module = await async_import_module(
+            hass, f"{__package__}.coordinator"
+        )
+        services_module = await async_import_module(
+            hass, f"{__package__}.services"
+        )
+        for platform in PLATFORMS:
+            await async_import_module(hass, f"{__package__}.{platform.value}")
+    except Exception:
+        _LOGGER.exception(
+            "Miner %s: failed to import a platform during setup", miner_ip
+        )
+        raise
     try:
         # See MINER_DETECTION_TIMEOUT in const.py for why this isn't tiny.
         miner = await asyncio.wait_for(
@@ -104,6 +115,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         )
     except (TimeoutError, asyncio.TimeoutError):
         miner = None
+    except Exception:
+        _LOGGER.exception(
+            "Miner %s: pyasic device discovery failed during setup", miner_ip
+        )
+        raise
 
     if miner is None and not config_entry.data.get(CONF_CACHED_PROFILE):
         # Never seen this miner successfully -> nothing to build entities
@@ -130,11 +146,23 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     # the primed data without raising UpdateFailed, so this completes normally
     # and schedules the background refresh that will detect the miner once it
     # comes back online.
-    await m_coordinator.async_config_entry_first_refresh()
+    try:
+        await m_coordinator.async_config_entry_first_refresh()
+    except Exception:
+        _LOGGER.exception("Miner %s: initial data refresh failed", miner_ip)
+        raise
 
-    await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+    except Exception:
+        _LOGGER.exception("Miner %s: platform setup failed", miner_ip)
+        raise
 
-    await services_module.async_setup_services(hass)
+    try:
+        await services_module.async_setup_services(hass)
+    except Exception:
+        _LOGGER.exception("Miner %s: service setup failed", miner_ip)
+        raise
 
     return True
 
