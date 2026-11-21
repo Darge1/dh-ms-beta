@@ -1,34 +1,9 @@
-# Miner-Steuerung · D.H. Edition
+# Miner-Steuerung
 
-**Originalcode für Mining und Steuerung – eigener Auftritt.**
+**Miner-Steuerung** ist eine Home-Assistant-Integration zur Überwachung und Steuerung von Bitcoin-ASIC-Minern.
 
-## Originalstand
-Basis: [tntvlad/hass-miner](https://github.com/tntvlad/hass-miner), Commit
-`0c582d9fa25a078f20b1d9e7d5dfecba3caba0ca` (2026-08-21). Alle Python-Dateien unter
-`custom_components/miner` entsprechen bytegenau diesem Stand. Die Datei
-`UPSTREAM_BASELINE.json` und GitHub Actions überprüfen das bei jedem Update.
+Sie zeigt unter anderem **Hashrate, Stromverbrauch, Effizienz, Temperaturen und Lüfterdrehzahlen** direkt in Home Assistant an. Je nach Miner und Firmware lassen sich außerdem Funktionen wie **Mining ein- und ausschalten, Leistung einstellen und Vnish-Presets auswählen** nutzen.
 
-Anpassungen: Name `Miner-Steuerung`, eigenes D.H.-Icon und Logo,
-Übersetzungen, Links und zusätzliche Dashboard-Dateien. Der technische
-Installations-/Erkennungsvorgang, die pyasic-Bibliotheksbehandlung, Sensoren,
-Services und alle Steuerungen wurden **nicht modifiziert**.
+Für eine übersichtliche Darstellung gibt es optional die **[D.H. Miner-Übersicht](dashboard/README.md)**: eine Dashboard-Karte mit bis zu fünf frei auswählbaren Live-Werten und verschiedenen Designs.
 
-## Dashboard
-Eine optionale Übersicht mit bis zu fünf ausgewählten Entitäten entsteht
-separat im Home-Assistant-Dashboard. Das ändert keinen Python-Code.
-
-## HACS
-Repository: `https://github.com/Darge1/dh-ms-beta` (Typ: Integration).
-Aktualisieren und Home Assistant neu starten. Bestehende Geräte nicht löschen.
-
-## Grenzen
-Identischer Originalcode ist kein Nachweis einer fehlerfreien Installation:
-auch das Original kann mit bestimmten Home-Assistant-/pyasic-Versionen oder
-mit einer zweiten Integration kollidieren, die pyasic während des Betriebs
-ersetzt. Den vollständigen Core-Traceback prüfen.
-
-## Urheberrecht
-Auf Basis von https://github.com/tntvlad/hass-miner und
-https://github.com/Schnitzel/hass-miner.
-Original-Lizenzhinweise bleiben erhalten. Die D.H.-Edition erhebt keinen
-Anspruch, den technischen Originalcode neu entwickelt zu haben.
+Die Integration basiert auf [hass-miner von tntvlad](https://github.com/tntvlad/hass-miner). Die ursprünglichen Lizenz- und Copyright-Hinweise bleiben erhalten.
