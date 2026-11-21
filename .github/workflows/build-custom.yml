@@ -1,31 +1,40 @@
-name: Validate customized Miner-Steuerung
-
+name: Validate original backend and D.H. dashboard
 on:
-  workflow_dispatch:
   push:
     paths:
       - 'custom_components/miner/**'
+      - 'dashboard/**'
+      - 'UPSTREAM_BASELINE.json'
       - '.github/workflows/build-custom.yml'
-
+  workflow_dispatch:
 permissions:
   contents: read
-
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout this repository
-        uses: actions/checkout@v4
-      - name: Validate Python syntax
-        run: python -m compileall -q custom_components/miner
-      - name: Validate manifest and version
+      - uses: actions/checkout@v4
+      - name: Compare all Python files with original snapshot
         run: |
           python - <<'PY'
-          import json
+          import json, subprocess
           from pathlib import Path
+          expected = json.loads(Path("UPSTREAM_BASELINE.json").read_text())["technical_files"]
+          actual = sorted(str(p) for p in Path("custom_components/miner").rglob("*.py"))
+          assert sorted(expected) == actual, (sorted(expected), actual)
+          for p, sha in expected.items():
+              actual_sha = subprocess.check_output(["git","hash-object",p],text=True).strip()
+              assert sha == actual_sha, f"Backend changed: {p}"
+          for name in ["manifest.json","strings.json","translations/en.json","translations/de.json"]:
+              json.loads((Path("custom_components/miner")/name).read_text())
           manifest = json.loads(Path("custom_components/miner/manifest.json").read_text())
           assert manifest["domain"] == "miner"
-          assert manifest["version"] == "1.0.0-beta.3"
-          assert "pyasic==0.78.12" in manifest["requirements"]
-          print("Manifest and syntax validation passed")
+          assert manifest["version"] == "1.0.0-beta.4"
+          assert manifest["requirements"] == ["betterproto==2.0.0b7","grpcio>=1.60.0","pyasic>=0.78.0"]
+          print("Verified: unmodified original miner backend.")
           PY
+      - name: Python syntax
+        run: python -m compileall -q custom_components/miner
+      - name: Optional dashboard JavaScript syntax
+        run: |
+          if [ -f dashboard/dh-miner-card.js ]; then node --check dashboard/dh-miner-card.js; fi

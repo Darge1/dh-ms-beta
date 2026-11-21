@@ -1,0 +1,78 @@
+{
+  "title": "Miner-Steuerung",
+  "config": {
+    "step": {
+      "user": {
+        "description": "Gib die IP-Adresse deines Miners ein oder lasse das Feld für eine Netzwerksuche leer.",
+        "data": {
+          "ip": "IP-Adresse",
+          "min_power": "Mindestleistung (W)",
+          "max_power": "Höchstleistung (W)"
+        }
+      },
+      "scan": {
+        "description": "Im Netzwerk werden Miner gesucht. Das kann bis zu zwei Minuten dauern."
+      },
+      "scan_result": {
+        "title": "Gefundene Miner",
+        "description": "Wähle einen Miner oder passe die Suche an.",
+        "data": {
+          "scan_miner": "Gefundener Miner",
+          "scan_network": "Netzwerkbereich (optional)",
+          "rescan": "Erneut suchen"
+        },
+        "data_description": {
+          "scan_network": "Netzwerkbereich in CIDR-Notation, z. B. 192.168.1.0/24."
+        }
+      },
+      "login": {
+        "data": {
+          "ssh_username": "SSH-Benutzername",
+          "ssh_password": "SSH-Passwort",
+          "rpc_password": "RPC-Passwort",
+          "web_username": "Web-Benutzername",
+          "web_password": "Web-Passwort"
+        }
+      },
+      "title": {
+        "data": {
+          "title": "Gerätename"
+        }
+      },
+      "avalon_options": {
+        "title": "Avalon-Miner: Einstellungen",
+        "description": "Steuerungsmodus auswählen.",
+        "data": {
+          "avalon_control_mode": "Steuerungsmodus"
+        },
+        "data_description": {
+          "avalon_control_mode": "Einfach: Basisüberwachung. Vollständig: CGMiner-API mit Betriebsart, LED und Mining-Schalter."
+        }
+      }
+    },
+    "error": {
+      "no_miners_found": "Keine Miner gefunden. Starte eine neue Suche oder gib den Netzwerkbereich an.",
+      "invalid_selection": "Der ausgewählte Miner ist nicht mehr erreichbar. Suche erneut.",
+      "invalid_cidr": "Ungültiger Netzwerkbereich, z. B. 192.168.1.0/24.",
+      "cidr_too_large": "Der Netzwerkbereich ist zu groß (max. 1024 Adressen)."
+    },
+    "progress": {
+      "scan_network": "Miner werden im Netzwerk gesucht…"
+    },
+    "abort": {
+      "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]",
+      "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]",
+      "already_configured": "[%key:common::config_flow::abort::already_configured%]"
+    }
+  },
+  "services": {
+    "reboot": {
+      "name": "Miner neu starten",
+      "description": "Startet den Miner neu."
+    },
+    "restart_backend": {
+      "name": "Mining neu starten",
+      "description": "Startet den Mining-Prozess neu."
+    }
+  }
+}

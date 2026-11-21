@@ -1,0 +1,20 @@
+{
+  "upstream": "https://github.com/tntvlad/hass-miner",
+  "commit": "0c582d9fa25a078f20b1d9e7d5dfecba3caba0ca",
+  "technical_files": {
+    "custom_components/miner/__init__.py": "473e1ccb0d32a941e3d31c95297890d29106dba3",
+    "custom_components/miner/button.py": "a771883984f16a698e3e6a292e8c86ae16e381f3",
+    "custom_components/miner/config_flow.py": "732ba1d957e8977d927b768e7c4b7af50dee5599",
+    "custom_components/miner/const.py": "c16c45d40ff6881fc9631ed7fff7e82010e20935",
+    "custom_components/miner/coordinator.py": "00431bc24d9cd1abafc92c5d352b1d0044c867e1",
+    "custom_components/miner/device_action.py": "f1da5e340fb457912bdb73aefe3b5ca73e8cb62f",
+    "custom_components/miner/light.py": "35164fce33b155c3bb56f4b38d127eec5ba5ddc2",
+    "custom_components/miner/number.py": "af46c3f81ce4876e162bf32aec58de9b9faee16b",
+    "custom_components/miner/patch.py": "eb1e725797231c4daa44bbcb57f3868f5e2307a7",
+    "custom_components/miner/select.py": "81befce11827dc917211521f151d94e7558afe8d",
+    "custom_components/miner/sensor.py": "4b72c277301a99519a251aa800e75c5b9a677235",
+    "custom_components/miner/services.py": "a76a826023a7605213d9e7103400945950916727",
+    "custom_components/miner/switch.py": "319d7d56649de9e5e3108ded1f8fdb7fdb07bbb9"
+  },
+  "policy": "All miner Python modules must match this snapshot byte for byte."
+}

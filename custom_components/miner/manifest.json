@@ -15,9 +15,9 @@
   "requirements": [
     "betterproto==2.0.0b7",
     "grpcio>=1.60.0",
-    "pyasic==0.78.12"
+    "pyasic>=0.78.0"
   ],
   "ssdp": [],
-  "version": "1.0.0-beta.3",
+  "version": "1.0.0-beta.4",
   "zeroconf": []
 }
