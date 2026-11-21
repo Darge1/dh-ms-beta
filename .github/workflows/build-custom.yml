@@ -48,7 +48,29 @@ jobs:
           assert set(manifest["dependencies"]) == {"network", "http", "frontend"}
           for name in ("strings.json","translations/en.json","translations/de.json"):
               json.loads((Path("custom_components/miner")/name).read_text())
-          assert Path("custom_components/miner/frontend/satoshi.png").stat().st_size > 1000
+          import struct, zlib
+          def check_png(path):
+              raw = Path(path).read_bytes()
+              assert raw.startswith(b"\x89PNG\r\n\x1a\n"), "Invalid PNG signature"
+              offset = 8
+              saw_end = False
+              while offset < len(raw):
+                  assert offset + 12 <= len(raw), "Truncated PNG chunk header"
+                  length = struct.unpack_from(">I", raw, offset)[0]
+                  assert offset + 12 + length <= len(raw), "Truncated PNG chunk data"
+                  marker = raw[offset + 4:offset + 8]
+                  crc_expected = struct.unpack_from(">I", raw, offset + 8 + length)[0]
+                  assert zlib.crc32(raw[offset + 4:offset + 8 + length]) == crc_expected, "Invalid PNG CRC"
+                  offset += 12 + length
+                  if marker == b"IEND":
+                      saw_end = True
+                      break
+              assert saw_end and offset == len(raw), "PNG missing IEND chunk"
+          for path in (
+              "custom_components/miner/frontend/satoshi.png",
+              "custom_components/miner/brand/logo.png",
+          ):
+              check_png(path)
           assert Path("custom_components/miner/frontend/dh-miner-card.js").read_bytes() == Path("dashboard/dh-miner-card.js").read_bytes()
           print("Original miner backend preserved; dashboard is isolated.")
           PY
