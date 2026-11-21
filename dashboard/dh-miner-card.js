@@ -3,6 +3,8 @@
 "use strict";
 const MAX = 5;
 const THEMES = ["midnight", "graphite", "clean"];
+const LOGO_MODES = ["satoshi", "dh", "none"];
+const SATOSHI_IMAGE = "/dh-miner/satoshi.png";
 const CSS = [
 ":host{display:block}",
 ".shell{--bg:#112532;--fg:#eef7f8;--soft:#92b4bc;--accent:#4cdec7;--line:rgba(150,190,200,.22);background:var(--bg);color:var(--fg);border-radius:18px;border:1px solid var(--line);overflow:hidden;font-family:var(--primary-font-family,Arial,sans-serif)}",
@@ -10,6 +12,7 @@ const CSS = [
 ".shell.clean{--bg:#fff;--fg:#1e303a;--soft:#647781;--accent:#119e9e;--line:#e1e9ed}",
 ".header{display:flex;gap:13px;align-items:center;padding:20px 20px 17px;border-bottom:1px solid var(--line)}",
 ".logo{border-radius:12px;display:grid;place-items:center;width:46px;height:46px;flex-shrink:0;background:linear-gradient(140deg,#0d3b48,#156879);color:#fff;border:2px solid var(--accent);font-weight:900;letter-spacing:-1px}",
+".brand-image{width:68px;height:68px;object-fit:contain;flex-shrink:0;border-radius:11px}.brand-dh{width:68px;height:68px;display:grid;place-items:center;flex-shrink:0;font-weight:900;font-size:24px;letter-spacing:-2px;color:var(--accent);border:2px solid var(--accent);border-radius:12px}",
 ".headline{flex:1;min-width:0}.title{font-weight:750;font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:2px;margin-top:5px;color:var(--soft)}",
 ".live{font-size:10px;color:var(--accent);border:1px solid var(--accent);border-radius:12px;padding:5px 8px}",
 ".list{padding:7px 18px 10px}.metric{min-height:46px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line)}.metric:last-child{border-bottom:0}",
@@ -26,7 +29,7 @@ function node(tag, cls, content) {
 }
 class DHMinerCard extends HTMLElement {
   static getStubConfig() {
-    return {type:"custom:dh-miner-card",title:"Miner-Steuerung",theme:"midnight",entities:[]};
+    return {type:"custom:dh-miner-card",title:"Miner-Steuerung",theme:"midnight",logo_mode:"satoshi",entities:[]};
   }
   static getConfigElement(){return document.createElement("dh-miner-card-editor");}
   setConfig(config){
@@ -34,6 +37,7 @@ class DHMinerCard extends HTMLElement {
     this._config = {
       title: typeof config.title==="string" ? config.title : "Miner-Steuerung",
       theme: THEMES.includes(config.theme) ? config.theme : "midnight",
+      logo_mode: LOGO_MODES.includes(config.logo_mode) ? config.logo_mode : "satoshi",
       entities: (config.entities || []).filter(x => typeof x==="string" && x.length).slice(0,MAX)
     };
     this._draw();
@@ -50,7 +54,14 @@ class DHMinerCard extends HTMLElement {
     const logo=node("div","logo","DH");
     const heading=node("div","headline");
     heading.append(node("div","title",this._config.title),node("div","eyebrow","MINER DASHBOARD"));
-    head.append(logo,heading,node("div","live","LIVE"));shell.appendChild(head);
+    head.append(logo,heading,node("div","live","LIVE"));
+    if(this._config.logo_mode==="satoshi"){
+      const artwork=node("img","brand-image");
+      artwork.src=SATOSHI_IMAGE;artwork.alt="Satoshi-Symbol";artwork.loading="eager";head.appendChild(artwork);
+    }else if(this._config.logo_mode==="dh"){
+      head.appendChild(node("div","brand-dh","DH"));
+    }
+    shell.appendChild(head);
     const list=node("div","list");
     if(!this._config.entities.length){
       list.appendChild(node("div","empty","Bis zu fünf Sensoren in den Karteneinstellungen auswählen – leere Plätze bleiben unsichtbar."));
@@ -102,6 +113,12 @@ class DHMinerEditor extends HTMLElement {
     }
     theme.value=this._config.theme||"midnight";
     theme.addEventListener("change",()=>{this._config.theme=theme.value;this._changed();});content.appendChild(theme);
+    const logomode=node("select");
+    for(const [key,label] of [["satoshi","Satoshi-Symbol (oben rechts)"],["dh","D.H.-Logo"],["none","Kein großes Logo"]]){
+      const o=node("option",null,label);o.value=key;logomode.appendChild(o);
+    }
+    logomode.value=this._config.logo_mode||"satoshi";
+    logomode.addEventListener("change",()=>{this._config.logo_mode=logomode.value;this._changed();});content.appendChild(logomode);
     for(let i=0;i<5;i++){
       const field=node("div","row");field.appendChild(node("label",null,"Wert "+(i+1)+" (optional)"));
       const picker=node("ha-entity-picker");picker.hass=this._hass;picker.value=this._slots[i];
@@ -115,5 +132,5 @@ class DHMinerEditor extends HTMLElement {
 if(!customElements.get("dh-miner-card"))customElements.define("dh-miner-card",DHMinerCard);
 if(!customElements.get("dh-miner-card-editor"))customElements.define("dh-miner-card-editor",DHMinerEditor);
 window.customCards=window.customCards||[];
-if(!window.customCards.some(c=>c.type==="dh-miner-card"))window.customCards.push({type:"dh-miner-card",name:"D.H. Miner-Übersicht",description:"Ein bis fünf auswählbare Sensoren; drei Designs."});
+if(!window.customCards.some(c=>c.type==="dh-miner-card"))window.customCards.push({type:"dh-miner-card",name:"D.H. Miner-Übersicht",description:"Bis zu fünf Sensoren, drei Designs und frei wählbares Logo."});
 })();

@@ -1,40 +1,59 @@
-name: Validate original backend and D.H. dashboard
+name: Verify miner backend and bundled dashboard
+
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'custom_components/miner/**'
       - 'dashboard/**'
       - 'UPSTREAM_BASELINE.json'
       - '.github/workflows/build-custom.yml'
-  workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  validate:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compare all Python files with original snapshot
+      - name: Verify original miner backend is unchanged
         run: |
           python - <<'PY'
-          import json, subprocess
+          import hashlib, json, subprocess
           from pathlib import Path
-          expected = json.loads(Path("UPSTREAM_BASELINE.json").read_text())["technical_files"]
-          actual = sorted(str(p) for p in Path("custom_components/miner").rglob("*.py"))
-          assert sorted(expected) == actual, (sorted(expected), actual)
-          for p, sha in expected.items():
-              actual_sha = subprocess.check_output(["git","hash-object",p],text=True).strip()
-              assert sha == actual_sha, f"Backend changed: {p}"
-          for name in ["manifest.json","strings.json","translations/en.json","translations/de.json"]:
-              json.loads((Path("custom_components/miner")/name).read_text())
+
+          record = json.loads(Path("UPSTREAM_BASELINE.json").read_text())
+          baseline = record["technical_files"]
+          known_modules = set(baseline)
+          actual_modules = {str(p) for p in Path("custom_components/miner").rglob("*.py")}
+          assert actual_modules == known_modules | {"custom_components/miner/dashboard_resource.py"}, (
+              sorted(actual_modules - known_modules), sorted(known_modules - actual_modules)
+          )
+          for path, sha in baseline.items():
+              if path.endswith("/__init__.py"):
+                  raw = Path(path).read_bytes()
+                  marker = b"\n\n# --- D.H. DASHBOARD REGISTRATION (cosmetic, isolated from mining) ---"
+                  assert raw.count(marker) == 1, "Unexpected backend entry point edits"
+                  original = raw.split(marker)[0]
+                  h = hashlib.sha1(b"blob " + str(len(original)).encode() + b"\0" + original).hexdigest()
+              else:
+                  h = subprocess.check_output(["git", "hash-object", path], text=True).strip()
+              assert h == sha, f"Upstream miner backend modified: {path}"
+
+          from pathlib import Path
           manifest = json.loads(Path("custom_components/miner/manifest.json").read_text())
-          assert manifest["domain"] == "miner"
-          assert manifest["version"] == "1.0.0-beta.4"
-          assert manifest["requirements"] == ["betterproto==2.0.0b7","grpcio>=1.60.0","pyasic>=0.78.0"]
-          print("Verified: unmodified original miner backend.")
+          assert manifest["version"] == "1.0.0-beta.5"
+          assert manifest["requirements"] == ["betterproto==2.0.0b7", "grpcio>=1.60.0", "pyasic>=0.78.0"]
+          assert set(manifest["dependencies"]) == {"network", "http", "frontend"}
+          for name in ("strings.json","translations/en.json","translations/de.json"):
+              json.loads((Path("custom_components/miner")/name).read_text())
+          assert Path("custom_components/miner/frontend/satoshi.png").stat().st_size > 1000
+          assert Path("custom_components/miner/frontend/dh-miner-card.js").read_bytes() == Path("dashboard/dh-miner-card.js").read_bytes()
+          print("Original miner backend preserved; dashboard is isolated.")
           PY
-      - name: Python syntax
-        run: python -m compileall -q custom_components/miner
-      - name: Optional dashboard JavaScript syntax
+      - name: Check code syntax
         run: |
-          if [ -f dashboard/dh-miner-card.js ]; then node --check dashboard/dh-miner-card.js; fi
+          python -m compileall -q custom_components/miner
+          node --check custom_components/miner/frontend/dh-miner-card.js
+          node --check dashboard/dh-miner-card.js

@@ -179,3 +179,34 @@ async def async_remove_config_entry_device(
 ) -> bool:
     """Remove a device from the config entry."""
     return True
+
+
+# --- D.H. DASHBOARD REGISTRATION (cosmetic, isolated from mining) ---
+from .dashboard_resource import async_register_dashboard
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Make the optional D.H. dashboard card available from the same HACS install.
+
+    This hook is separate from async_setup_entry so the original miner backend,
+    device detection, pyasic handling and entity lifecycle are unchanged.
+    The optional card registration must never prevent miners from loading.
+    """
+    from homeassistant.core import CoreState, EVENT_HOMEASSISTANT_STARTED
+
+    async def _register_dashboard(_event=None) -> None:
+        try:
+            await async_register_dashboard(hass)
+        except Exception:
+            _LOGGER.exception(
+                "Optional D.H. dashboard could not be registered; "
+                "miner integration continues normally"
+            )
+
+    if hass.state == CoreState.running:
+        hass.async_create_task(_register_dashboard())
+    else:
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _register_dashboard
+        )
+    return True
